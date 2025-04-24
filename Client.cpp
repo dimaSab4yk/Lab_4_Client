@@ -11,7 +11,7 @@
 using namespace std;
 using namespace std::chrono;
 
-const int PORT = 8080;
+const int PORT = 8000;
 const char* SERVER_IP = "127.0.0.1";
 
 void fillMatrix(vector<vector<int>>& matrix, int n)
@@ -116,7 +116,7 @@ int main()
     WSADATA wsaData;
     int wsaResult = WSAStartup(MAKEWORD(2, 2), &wsaData);
 
-    if (wsaResult != 0) 
+    if (wsaResult != 0)
     {
         cerr << "WSAStartup failed with error: " << wsaResult << endl;
         return 1;
@@ -127,16 +127,72 @@ int main()
     cin >> n;
 
     vector<vector<int>> matrix(n, vector<int>(n));
-
     fillMatrix(matrix, n);
+
+    SOCKET clientSocket = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+
+    if (clientSocket == INVALID_SOCKET)
+    {
+        cerr << "Socket creation failed!" << endl;
+        return 1;
+    }
+
+    sockaddr_in serverAddr;
+    serverAddr.sin_family = AF_INET;
+    serverAddr.sin_port = htons(PORT);
+    serverAddr.sin_addr.s_addr = inet_addr(SERVER_IP);
+
+    if (connect(clientSocket, (sockaddr*)&serverAddr, sizeof(serverAddr)) == SOCKET_ERROR)
+    {
+        cerr << "Connection failed!" << endl;
+        closesocket(clientSocket);
+        return 1;
+    }
+
+    sendCommand(clientSocket, "HELLO");
 
     vector<int> threadCounts = { 1, 2, 4, 8, 16, 32, 64, 128, 256 };
 
-    for (int threads : threadCounts)
+    for (int numThreads : threadCounts)
     {
-        processWithThreads(n, threads, matrix);
+        sendCommand(clientSocket, "SEND_DATA");
+        sendInt(clientSocket, n);
+        sendInt(clientSocket, numThreads);
+
+        for (int i = 0; i < n; ++i)
+        {
+            for (int j = 0; j < n; ++j)
+            {
+                sendInt(clientSocket, matrix[i][j]);
+            }
+        }                         
+
+        sendCommand(clientSocket, "START_COMPUTATION");
+        sendCommand(clientSocket, "GET_STATUS");
+        sendCommand(clientSocket, "GET_RESULT");
+
+        int dummyTimeNs = recvInt(clientSocket);
+        vector<vector<int>> mirroredMatrix(n, vector<int>(n));
+
+        auto start = high_resolution_clock::now();
+
+        for (int i = 0; i < n; ++i)
+        {
+            for (int j = 0; j < n; ++j)
+            {
+                mirroredMatrix[i][j] = recvInt(clientSocket);
+            }
+        }            
+                
+        auto end = high_resolution_clock::now();
+        double seconds = duration_cast<nanoseconds>(end - start).count() * 1e-9;
+
+        cout << "Threads: " << numThreads << " - Time: " << fixed << seconds << " seconds\n";
     }
 
+    sendCommand(clientSocket, "EXIT");
+    closesocket(clientSocket);
     WSACleanup();
+
     return 0;
 }
